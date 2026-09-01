@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: investor-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: investor_db
+      POSTGRES_USER: investor_user
+      POSTGRES_PASSWORD: investor_password
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
