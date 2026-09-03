@@ -1,31 +1,30 @@
-import psycopg
+import os
 import re
 
+import psycopg
+from dotenv import load_dotenv
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def clean_numeric(value):
     """
     Convert financial values such as:
+
         "$ 97,690"
         "$7,153"
         "97,690"
         "7153 million"
 
-    into numeric values suitable for PostgreSQL.
+    into numeric values.
     """
 
     if value is None:
         return None
 
-    # Already numeric
     if isinstance(value, (int, float)):
         return value
 
@@ -34,15 +33,16 @@ def clean_numeric(value):
     if not value:
         return None
 
-    # Remove currency symbols, commas, spaces and other text
     value = value.replace(",", "")
     value = value.replace("$", "")
     value = value.replace("₹", "")
     value = value.replace("€", "")
     value = value.replace("£", "")
 
-    # Extract first numeric value
-    match = re.search(r"-?\d+(?:\.\d+)?", value)
+    match = re.search(
+        r"-?\d+(?:\.\d+)?",
+        value
+    )
 
     if not match:
         return None
@@ -50,12 +50,14 @@ def clean_numeric(value):
     number = match.group()
 
     try:
+
         if "." in number:
             return float(number)
 
         return int(number)
 
     except ValueError:
+
         return None
 
 
@@ -67,7 +69,6 @@ def clean_text_list(value):
         ["Risk A", "Risk B"]
 
     becomes:
-
         Risk A
         Risk B
     """
@@ -76,7 +77,11 @@ def clean_text_list(value):
         return None
 
     if isinstance(value, list):
-        return "\n".join(str(item).strip() for item in value)
+
+        return "\n".join(
+            str(item).strip()
+            for item in value
+        )
 
     return str(value).strip()
 
@@ -87,35 +92,36 @@ def save_metrics(
     metrics: dict
 ) -> None:
 
-    connection = psycopg.connect(**DB_CONFIG)
+    if not DATABASE_URL:
+        raise ValueError(
+            "DATABASE_URL is not set in the .env file."
+        )
+
+    print("Connecting to PostgreSQL...")
+
+    connection = psycopg.connect(
+        DATABASE_URL
+    )
 
     try:
 
         with connection.cursor() as cursor:
 
-            # ---------------------------------------------------------
-            # Extract and clean risk / growth information
-            # ---------------------------------------------------------
-
-            risk_factors = metrics.get(
-                "Top Risk Factors"
-            )
-
-            growth_drivers = metrics.get(
-                "Top Growth Drivers"
-            )
+            # ---------------------------------------------
+            # Risk factors and growth drivers
+            # ---------------------------------------------
 
             risk_factors = clean_text_list(
-                risk_factors
+                metrics.get("Top Risk Factors")
             )
 
             growth_drivers = clean_text_list(
-                growth_drivers
+                metrics.get("Top Growth Drivers")
             )
 
-            # ---------------------------------------------------------
-            # Clean financial numbers
-            # ---------------------------------------------------------
+            # ---------------------------------------------
+            # Financial metrics
+            # ---------------------------------------------
 
             revenue = clean_numeric(
                 metrics.get("Revenue")
@@ -143,15 +149,9 @@ def save_metrics(
                 metrics.get("Total Liabilities")
             )
 
-            # ---------------------------------------------------------
+            # ---------------------------------------------
             # UPSERT
-            #
-            # If company + year does not exist:
-            #     INSERT
-            #
-            # If company + year already exists:
-            #     UPDATE
-            # ---------------------------------------------------------
+            # ---------------------------------------------
 
             query = """
                 INSERT INTO financial_metrics (
@@ -183,14 +183,29 @@ def save_metrics(
                 ON CONFLICT (company, year)
 
                 DO UPDATE SET
+
                     revenue = EXCLUDED.revenue,
-                    net_income = EXCLUDED.net_income,
-                    operating_income = EXCLUDED.operating_income,
-                    cash_flow = EXCLUDED.cash_flow,
-                    total_assets = EXCLUDED.total_assets,
-                    total_liabilities = EXCLUDED.total_liabilities,
-                    risk_factors = EXCLUDED.risk_factors,
-                    growth_drivers = EXCLUDED.growth_drivers
+
+                    net_income =
+                        EXCLUDED.net_income,
+
+                    operating_income =
+                        EXCLUDED.operating_income,
+
+                    cash_flow =
+                        EXCLUDED.cash_flow,
+
+                    total_assets =
+                        EXCLUDED.total_assets,
+
+                    total_liabilities =
+                        EXCLUDED.total_liabilities,
+
+                    risk_factors =
+                        EXCLUDED.risk_factors,
+
+                    growth_drivers =
+                        EXCLUDED.growth_drivers
             """
 
             cursor.execute(
@@ -198,15 +213,12 @@ def save_metrics(
                 (
                     company,
                     int(year),
-
                     revenue,
                     net_income,
                     operating_income,
                     cash_flow,
-
                     total_assets,
                     total_liabilities,
-
                     risk_factors,
                     growth_drivers,
                 )

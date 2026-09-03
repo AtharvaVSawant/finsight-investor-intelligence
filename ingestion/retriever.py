@@ -1,18 +1,28 @@
+import os
+
 import psycopg
+
+from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
+
+
+# ============================================================
+# LOAD ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL is not set in the .env file."
+    )
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
-
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
 
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
 
@@ -24,13 +34,17 @@ MODEL_NAME = "BAAI/bge-base-en-v1.5"
 print("Loading BGE model...")
 
 embeddings = HuggingFaceEmbeddings(
+
     model_name=MODEL_NAME,
+
     model_kwargs={
         "device": "cpu"
     },
+
     encode_kwargs={
         "normalize_embeddings": True
     }
+
 )
 
 print("✓ BGE model loaded")
@@ -41,146 +55,198 @@ print("✓ BGE model loaded")
 # ============================================================
 
 def retrieve_documents(
+
     query: str,
+
     top_k: int = 5,
+
     similarity_threshold: float = 0.60,
+
     company: str | None = None,
+
     year: int | None = None,
+
     document_type: str | None = None,
+
 ):
+
     """
-    Retrieve the most semantically relevant document chunks.
-
-    Args:
-        query:
-            User's natural-language question.
-
-        top_k:
-            Maximum number of results to return.
-
-        similarity_threshold:
-            Minimum cosine similarity required.
-
-        company:
-            Optional company filter.
-
-        year:
-            Optional year filter.
-
-        document_type:
-            Optional document type filter.
-
-    Returns:
-        List of dictionaries containing retrieved chunks.
+    Retrieve semantically relevant document chunks
+    from PostgreSQL + pgvector.
     """
 
     # ========================================================
-    # VALIDATE INPUTS
+    # VALIDATE INPUT
     # ========================================================
 
     if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
+
+        raise ValueError(
+            "Query cannot be empty"
+        )
 
     if top_k <= 0:
-        raise ValueError("top_k must be greater than 0")
+
+        raise ValueError(
+            "top_k must be greater than 0"
+        )
 
     if not 0 <= similarity_threshold <= 1:
+
         raise ValueError(
-            "similarity_threshold must be between 0 and 1"
+            "similarity_threshold "
+            "must be between 0 and 1"
         )
 
     # ========================================================
     # CREATE QUERY EMBEDDING
     # ========================================================
 
-    print("\n✓ Generating query embedding...")
+    print(
+        "\n✓ Generating query embedding..."
+    )
 
-    query_vector = embeddings.embed_query(query)
+    query_vector = embeddings.embed_query(
+        query
+    )
 
     print(
-        f"✓ Embedding dimensions: {len(query_vector)}"
+        f"✓ Embedding dimensions: "
+        f"{len(query_vector)}"
     )
 
     # ========================================================
-    # BUILD SQL QUERY
+    # BUILD SQL
     # ========================================================
 
     sql = """
+
         SELECT
+
             id,
+
             content,
+
             source,
+
             company,
+
             document_type,
+
             year,
+
             page,
+
             chunk_index,
 
-            embedding <=> %s::vector AS distance
+            embedding <=> %s::vector
+                AS distance
 
         FROM document_chunks
 
         WHERE embedding IS NOT NULL
-    """
 
-    # --------------------------------------------------------
-    # SQL PARAMETERS
-    # --------------------------------------------------------
+    """
 
     parameters = []
 
-    # IMPORTANT:
-    # The first %s in the SELECT statement is the query vector.
-    parameters.append(query_vector)
+    # --------------------------------------------------------
+    # First query vector
+    # Used in SELECT
+    # --------------------------------------------------------
+
+    parameters.append(
+        query_vector
+    )
 
     # ========================================================
-    # METADATA FILTERS
+    # OPTIONAL FILTERS
     # ========================================================
 
     if company is not None:
+
         sql += """
+
             AND company = %s
+
         """
-        parameters.append(company)
+
+        parameters.append(
+            company
+        )
 
     if year is not None:
+
         sql += """
+
             AND year = %s
+
         """
-        parameters.append(year)
+
+        parameters.append(
+            year
+        )
 
     if document_type is not None:
+
         sql += """
+
             AND document_type = %s
+
         """
-        parameters.append(document_type)
+
+        parameters.append(
+            document_type
+        )
 
     # ========================================================
-    # RETRIEVE MORE CANDIDATES THAN REQUIRED
+    # CANDIDATE RETRIEVAL
     # ========================================================
 
-    candidate_k = max(top_k * 4, 20)
+    candidate_k = max(
+        top_k * 4,
+        20
+    )
 
     sql += """
+
         ORDER BY embedding <=> %s::vector
+
         LIMIT %s
+
     """
 
+    # --------------------------------------------------------
     # Query vector for ORDER BY
-    parameters.append(query_vector)
+    # --------------------------------------------------------
 
-    # Number of candidates
-    parameters.append(candidate_k)
+    parameters.append(
+        query_vector
+    )
+
+    # --------------------------------------------------------
+    # Candidate count
+    # --------------------------------------------------------
+
+    parameters.append(
+        candidate_k
+    )
 
     # ========================================================
-    # EXECUTE QUERY
+    # CONNECT TO SUPABASE
     # ========================================================
 
-    print("\nConnecting to PostgreSQL...")
+    print(
+        "\nConnecting to PostgreSQL..."
+    )
 
-    connection = psycopg.connect(**DB_CONFIG)
+    connection = psycopg.connect(
+        DATABASE_URL
+    )
 
-    print("✓ Connected")
+    print(
+        "✓ Connected"
+    )
 
     try:
 
@@ -206,55 +272,79 @@ def retrieve_documents(
     for row in rows:
 
         (
+
             chunk_id,
+
             content,
+
             source,
+
             company_name,
+
             doc_type,
+
             doc_year,
+
             page,
+
             chunk_index,
+
             distance,
+
         ) = row
 
         # ----------------------------------------------------
-        # pgvector <=> returns cosine distance.
+        # pgvector cosine distance
         #
-        # Because embeddings are normalized:
-        #
-        # cosine similarity = 1 - cosine distance
+        # similarity = 1 - distance
         # ----------------------------------------------------
 
-        similarity = 1 - float(distance)
+        similarity = (
+            1 - float(distance)
+        )
 
         # ----------------------------------------------------
-        # APPLY SIMILARITY THRESHOLD
+        # Similarity threshold
         # ----------------------------------------------------
 
         if similarity < similarity_threshold:
+
             continue
 
         # ----------------------------------------------------
-        # STORE RESULT
+        # Store result
         # ----------------------------------------------------
 
         results.append(
+
             {
+
                 "id": chunk_id,
+
                 "content": content,
+
                 "source": source,
+
                 "company": company_name,
+
                 "document_type": doc_type,
+
                 "year": doc_year,
+
                 "page": page,
+
                 "chunk_index": chunk_index,
+
                 "distance": float(distance),
+
                 "similarity": similarity,
+
             }
+
         )
 
     # ========================================================
-    # KEEP ONLY TOP_K RESULTS
+    # TOP K
     # ========================================================
 
     results = results[:top_k]
@@ -268,24 +358,39 @@ def retrieve_documents(
 
 if __name__ == "__main__":
 
-    query = "What products and services does Apple offer?"
+    query = (
+        "What products and services "
+        "does Apple offer?"
+    )
 
     print("\n" + "=" * 80)
-    print("SEMANTIC RETRIEVAL TEST")
+
+    print(
+        "SEMANTIC RETRIEVAL TEST"
+    )
+
     print("=" * 80)
 
-    print(f"\nQuery: {query}")
+    print(
+        f"\nQuery: {query}"
+    )
 
     # --------------------------------------------------------
-    # RUN RETRIEVER
+    # Run retrieval
     # --------------------------------------------------------
 
     results = retrieve_documents(
+
         query=query,
+
         top_k=5,
+
         similarity_threshold=0.60,
+
         company="Apple",
+
         year=2024,
+
     )
 
     # ========================================================
@@ -293,46 +398,102 @@ if __name__ == "__main__":
     # ========================================================
 
     print("\n" + "=" * 80)
-    print(f"TOP {len(results)} RESULTS")
+
+    print(
+        f"TOP {len(results)} RESULTS"
+    )
+
     print("=" * 80)
 
     if not results:
 
-        print("\n⚠ No documents matched the query.")
+        print(
+            "\n⚠ No documents matched "
+            "the query."
+        )
 
     else:
 
         for rank, result in enumerate(
+
             results,
+
             start=1
+
         ):
 
-            print("\n" + "-" * 80)
-
-            print(f"Rank       : {rank}")
-            print(f"Chunk ID   : {result['id']}")
-            print(f"Company    : {result['company']}")
-            print(f"Year       : {result['year']}")
-            print(f"Document   : {result['document_type']}")
-            print(f"Page       : {result['page']}")
-            print(f"Chunk      : {result['chunk_index']}")
             print(
-                f"Distance   : {result['distance']:.4f}"
-            )
-            print(
-                f"Similarity : {result['similarity']:.4f}"
+                "\n" + "-" * 80
             )
 
-            print("\nSource:")
-            print(result["source"])
+            print(
+                f"Rank       : {rank}"
+            )
 
-            print("\nContent:")
-            print(result["content"][:1000])
+            print(
+                f"Chunk ID   : "
+                f"{result['id']}"
+            )
+
+            print(
+                f"Company    : "
+                f"{result['company']}"
+            )
+
+            print(
+                f"Year       : "
+                f"{result['year']}"
+            )
+
+            print(
+                f"Document   : "
+                f"{result['document_type']}"
+            )
+
+            print(
+                f"Page       : "
+                f"{result['page']}"
+            )
+
+            print(
+                f"Chunk      : "
+                f"{result['chunk_index']}"
+            )
+
+            print(
+                f"Distance   : "
+                f"{result['distance']:.4f}"
+            )
+
+            print(
+                f"Similarity : "
+                f"{result['similarity']:.4f}"
+            )
+
+            print(
+                "\nSource:"
+            )
+
+            print(
+                result["source"]
+            )
+
+            print(
+                "\nContent:"
+            )
+
+            print(
+                result["content"][:1000]
+            )
 
     # ========================================================
     # COMPLETION
     # ========================================================
 
     print("\n" + "=" * 80)
-    print("RETRIEVAL COMPLETE")
+
+    print(
+        "RETRIEVAL COMPLETE"
+    )
+
     print("=" * 80)

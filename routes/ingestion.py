@@ -28,13 +28,7 @@ MARKDOWN_DIR.mkdir(parents=True, exist_ok=True)
 # DATABASE
 # ============================================================
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 # ============================================================
@@ -158,7 +152,7 @@ async def upload_document(
 
         print("Connecting to PostgreSQL...")
 
-        connection = psycopg.connect(**DB_CONFIG)
+        connection = psycopg.connect(DATABASE_URL)
 
         print("✓ Connected to PostgreSQL")
 
@@ -204,7 +198,7 @@ async def upload_document(
                         )
                         """,
                         (
-                            content,
+                            content,connection = psycopg.connect(DATABASE_URL)
                             Path(markdown_path).name,
                             company,
                             "Annual Report",

@@ -1,26 +1,30 @@
+import os
+
 import psycopg
+from dotenv import load_dotenv
 
+load_dotenv()
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def create_financial_metrics_table():
 
+    if not DATABASE_URL:
+        raise ValueError(
+            "DATABASE_URL is not set in the .env file."
+        )
+
     print("Connecting to PostgreSQL...")
 
-    connection = psycopg.connect(**DB_CONFIG)
+    connection = psycopg.connect(DATABASE_URL)
 
     try:
 
         with connection.cursor() as cursor:
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS financial_metrics (
 
                     id SERIAL PRIMARY KEY,
@@ -29,17 +33,17 @@ def create_financial_metrics_table():
 
                     year VARCHAR(10) NOT NULL,
 
-                    revenue TEXT,
+                    revenue NUMERIC,
 
-                    net_income TEXT,
+                    net_income NUMERIC,
 
-                    operating_income TEXT,
+                    operating_income NUMERIC,
 
-                    cash_flow TEXT,
+                    cash_flow NUMERIC,
 
-                    total_assets TEXT,
+                    total_assets NUMERIC,
 
-                    total_liabilities TEXT,
+                    total_liabilities NUMERIC,
 
                     risk_factors TEXT,
 
@@ -51,7 +55,8 @@ def create_financial_metrics_table():
                     UNIQUE (company, year)
 
                 );
-            """)
+                """
+            )
 
         connection.commit()
 

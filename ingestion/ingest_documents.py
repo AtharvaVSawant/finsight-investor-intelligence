@@ -1,23 +1,32 @@
+import os
 from pathlib import Path
+
 import psycopg
 
+from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+
+# ============================================================
+# LOAD ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL is not set in the .env file."
+    )
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
-
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
 
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
 
@@ -33,18 +42,21 @@ DATA_DIR = Path(
 # ============================================================
 
 DOCUMENTS = [
+
     {
         "file": DATA_DIR / "2024_Apple.md",
         "company": "Apple",
         "year": 2024,
         "document_type": "Annual Report",
     },
+
     {
         "file": DATA_DIR / "2024_Tesla.md",
         "company": "Tesla",
         "year": 2024,
         "document_type": "Annual Report",
     },
+
 ]
 
 
@@ -59,13 +71,17 @@ def load_embeddings():
     print("=" * 80)
 
     embeddings = HuggingFaceEmbeddings(
+
         model_name=MODEL_NAME,
+
         model_kwargs={
             "device": "cpu"
         },
+
         encode_kwargs={
             "normalize_embeddings": True
         },
+
     )
 
     print("✓ BGE model loaded")
@@ -102,8 +118,11 @@ def create_semantic_chunks(
     print("\nCreating semantic chunks...")
 
     splitter = SemanticChunker(
+
         embeddings=embeddings,
+
         breakpoint_threshold_type="percentile",
+
     )
 
     chunks = splitter.create_documents(
@@ -111,7 +130,8 @@ def create_semantic_chunks(
     )
 
     print(
-        f"✓ Semantic chunks generated: {len(chunks)}"
+        f"✓ Semantic chunks generated: "
+        f"{len(chunks)}"
     )
 
     return chunks
@@ -129,13 +149,12 @@ def enforce_chunk_limit(
 
     oversized_count = 0
 
-    # Recursive splitter acts as a safety layer.
-    # It tries to preserve paragraphs and sentences
-    # while keeping chunks below MAX_CHUNK_SIZE.
-
     splitter = RecursiveCharacterTextSplitter(
+
         chunk_size=MAX_CHUNK_SIZE,
+
         chunk_overlap=150,
+
         separators=[
             "\n\n",
             "\n",
@@ -143,6 +162,7 @@ def enforce_chunk_limit(
             " ",
             "",
         ],
+
     )
 
     for chunk in chunks:
@@ -152,6 +172,10 @@ def enforce_chunk_limit(
         if not content:
             continue
 
+        # ------------------------------------------------------
+        # Chunk already within limit
+        # ------------------------------------------------------
+
         if len(content) <= MAX_CHUNK_SIZE:
 
             final_chunks.append(
@@ -160,6 +184,10 @@ def enforce_chunk_limit(
                     metadata=chunk.metadata,
                 )
             )
+
+        # ------------------------------------------------------
+        # Oversized semantic chunk
+        # ------------------------------------------------------
 
         else:
 
@@ -240,7 +268,7 @@ def print_chunk_statistics(
 
 
 # ============================================================
-# CHECK EXISTING DOCUMENT
+# DELETE EXISTING DOCUMENT
 # ============================================================
 
 def delete_existing_document(
@@ -250,15 +278,20 @@ def delete_existing_document(
 ):
 
     cursor.execute(
+
         """
         DELETE FROM document_chunks
+
         WHERE company = %s
+
         AND year = %s;
         """,
+
         (
             company,
             year,
         ),
+
     )
 
     deleted = cursor.rowcount
@@ -282,14 +315,19 @@ def store_chunks(
 ):
 
     company = document["company"]
+
     year = document["year"]
+
     document_type = document["document_type"]
+
     file_path = document["file"]
 
     print("\nConnecting to PostgreSQL...")
 
+    # IMPORTANT:
+    # Store the connection in a variable.
     connection = psycopg.connect(
-        **DB_CONFIG
+        DATABASE_URL
     )
 
     print("✓ Connected to PostgreSQL")
@@ -299,17 +337,21 @@ def store_chunks(
         with connection.cursor() as cursor:
 
             # ------------------------------------------------
-            # Remove previous chunks for this document
+            # Remove old chunks
             # ------------------------------------------------
 
             delete_existing_document(
+
                 cursor,
+
                 company,
+
                 year,
+
             )
 
             # ------------------------------------------------
-            # Insert new chunks
+            # Insert chunks
             # ------------------------------------------------
 
             total = len(chunks)
@@ -325,23 +367,37 @@ def store_chunks(
                 if not content:
                     continue
 
+                # ------------------------------------------------
                 # Safety check
+                # ------------------------------------------------
+
                 if len(content) > MAX_CHUNK_SIZE:
 
                     raise ValueError(
+
                         f"Chunk {index} exceeds "
                         f"maximum size: "
                         f"{len(content)} characters"
+
                     )
 
+                # ------------------------------------------------
                 # Generate BGE embedding
+                # ------------------------------------------------
+
                 vector = embeddings.embed_query(
                     content
                 )
 
+                # ------------------------------------------------
+                # Insert into PostgreSQL
+                # ------------------------------------------------
+
                 cursor.execute(
+
                     """
                     INSERT INTO document_chunks (
+
                         content,
                         source,
                         company,
@@ -350,8 +406,11 @@ def store_chunks(
                         page,
                         chunk_index,
                         embedding
+
                     )
+
                     VALUES (
+
                         %s,
                         %s,
                         %s,
@@ -360,19 +419,35 @@ def store_chunks(
                         %s,
                         %s,
                         %s
+
                     )
                     """,
+
                     (
+
                         content,
+
                         file_path.name,
+
                         company,
+
                         document_type,
+
                         year,
+
                         None,
+
                         index,
+
                         vector,
+
                     ),
+
                 )
+
+                # ------------------------------------------------
+                # Progress
+                # ------------------------------------------------
 
                 if (
                     (index + 1) % 5 == 0
@@ -412,13 +487,18 @@ def process_document(
 ):
 
     company = document["company"]
+
     year = document["year"]
+
     file_path = document["file"]
 
     print("\n" + "#" * 80)
+
     print(
-        f"PROCESSING: {company} {year}"
+        f"PROCESSING: "
+        f"{company} {year}"
     )
+
     print("#" * 80)
 
     print(
@@ -443,12 +523,15 @@ def process_document(
     # --------------------------------------------------------
 
     semantic_chunks = create_semantic_chunks(
+
         markdown_content,
+
         embeddings,
+
     )
 
     # --------------------------------------------------------
-    # Enforce maximum chunk size
+    # Enforce maximum size
     # --------------------------------------------------------
 
     final_chunks = enforce_chunk_limit(
@@ -464,13 +547,17 @@ def process_document(
     )
 
     # --------------------------------------------------------
-    # Store in PostgreSQL
+    # Store
     # --------------------------------------------------------
 
     store_chunks(
+
         final_chunks,
+
         embeddings,
+
         document,
+
     )
 
     return len(final_chunks)
@@ -483,7 +570,11 @@ def process_document(
 if __name__ == "__main__":
 
     print("=" * 80)
-    print("FINANCIAL DOCUMENT INGESTION")
+
+    print(
+        "FINANCIAL DOCUMENT INGESTION"
+    )
+
     print("=" * 80)
 
     # --------------------------------------------------------
@@ -495,14 +586,17 @@ if __name__ == "__main__":
     total_chunks = 0
 
     # --------------------------------------------------------
-    # Process Apple + Tesla
+    # Process documents
     # --------------------------------------------------------
 
     for document in DOCUMENTS:
 
         count = process_document(
+
             document,
+
             embeddings,
+
         )
 
         total_chunks += count
@@ -512,7 +606,9 @@ if __name__ == "__main__":
     # --------------------------------------------------------
 
     print("\n" + "=" * 80)
+
     print("INGESTION COMPLETE")
+
     print("=" * 80)
 
     print(

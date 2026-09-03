@@ -6,13 +6,7 @@ from fastapi import APIRouter
 router = APIRouter()
 
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "investor_db",
-    "user": "investor_user",
-    "password": "investor_password",
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 @router.get("/metrics")
@@ -37,7 +31,7 @@ def format_money(value):
 
 def get_metrics():
 
-    connection = psycopg.connect(**DB_CONFIG)
+    connection = psycopg.connect(DATABASE_URL)
 
     try:
 
