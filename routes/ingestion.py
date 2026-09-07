@@ -1,12 +1,25 @@
+import os
 from pathlib import Path
 
 import psycopg
+from dotenv import load_dotenv
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from ingestion.pdf_markdown_converter import PDFToMarkdownConverter
 from ingestion.semantic_chunker import chunk_markdown
 
+
+# ============================================================
+# LOAD ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
+
+
+# ============================================================
+# ROUTER
+# ============================================================
 
 router = APIRouter()
 
@@ -29,6 +42,12 @@ MARKDOWN_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not configured. "
+        "Please add DATABASE_URL to your .env file."
+    )
 
 
 # ============================================================
@@ -87,8 +106,8 @@ async def upload_document(
         pdf_path = UPLOAD_DIR / Path(file.filename).name
 
         with open(pdf_path, "wb") as buffer:
-            shutil_data = await file.read()
-            buffer.write(shutil_data)
+            file_data = await file.read()
+            buffer.write(file_data)
 
         print(f"\n✓ PDF uploaded: {pdf_path.name}")
 
@@ -128,7 +147,7 @@ async def upload_document(
         #
         # Example:
         # 2024_Apple.pdf
-        # 2024_Microsoft.pdf
+        # 2024_Tesla.pdf
         # ----------------------------------------------------
 
         filename = Path(file.filename).stem
@@ -137,7 +156,12 @@ async def upload_document(
 
         if len(parts) == 2:
 
-            year = int(parts[0]) if parts[0].isdigit() else None
+            year = (
+                int(parts[0])
+                if parts[0].isdigit()
+                else None
+            )
+
             company = parts[1]
 
         else:
@@ -170,9 +194,16 @@ async def upload_document(
                         continue
 
 
+                    # ------------------------------------------------
                     # Generate embedding
+                    # ------------------------------------------------
+
                     vector = embeddings.embed_query(content)
 
+
+                    # ------------------------------------------------
+                    # Insert into PostgreSQL
+                    # ------------------------------------------------
 
                     cursor.execute(
                         """
@@ -198,7 +229,7 @@ async def upload_document(
                         )
                         """,
                         (
-                            content,connection = psycopg.connect(DATABASE_URL)
+                            content,
                             Path(markdown_path).name,
                             company,
                             "Annual Report",
@@ -212,17 +243,33 @@ async def upload_document(
                     inserted += 1
 
 
+                    # ------------------------------------------------
+                    # Progress
+                    # ------------------------------------------------
+
                     if (
                         inserted % 10 == 0
                         or index == len(chunks) - 1
                     ):
+
                         print(
                             f"Inserted "
                             f"{inserted}/{len(chunks)} chunks"
                         )
 
 
+                # ------------------------------------------------
+                # Commit transaction
+                # ------------------------------------------------
+
                 connection.commit()
+
+
+        except Exception:
+
+            connection.rollback()
+            raise
+
 
         finally:
 
@@ -247,9 +294,18 @@ async def upload_document(
         }
 
 
+    # ========================================================
+    # HTTP EXCEPTION
+    # ========================================================
+
     except HTTPException:
+
         raise
 
+
+    # ========================================================
+    # GENERAL EXCEPTION
+    # ========================================================
 
     except Exception as e:
 
