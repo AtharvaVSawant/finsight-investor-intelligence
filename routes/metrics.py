@@ -1,10 +1,7 @@
-import psycopg
+import os
+from dotenv import load_dotenv
 
-from fastapi import APIRouter
-
-
-router = APIRouter()
-
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
