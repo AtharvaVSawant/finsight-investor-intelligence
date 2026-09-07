@@ -1,21 +1,26 @@
 import os
+
+import psycopg
 from dotenv import load_dotenv
+from fastapi import APIRouter
+
 
 load_dotenv()
 
+router = APIRouter()
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not configured")
 
-@router.get("/metrics")
 
 def format_money(value):
     if value is None:
         return None
 
     try:
-        # Remove existing formatting if value is already a string
         cleaned = str(value).replace("$", "").replace(",", "").strip()
-
         number = float(cleaned)
 
         if number < 0:
@@ -25,6 +30,7 @@ def format_money(value):
 
     except (ValueError, TypeError):
         return str(value)
+
 
 def get_metrics():
 
@@ -56,7 +62,6 @@ def get_metrics():
             rows = cursor.fetchall()
 
     finally:
-
         connection.close()
 
     metrics = []
@@ -84,3 +89,8 @@ def get_metrics():
         )
 
     return metrics
+
+
+@router.get("/metrics")
+def metrics():
+    return get_metrics()

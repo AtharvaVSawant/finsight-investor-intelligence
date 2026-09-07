@@ -84,3 +84,7 @@ def dashboard(request: Request):
             "total_reports": total_reports,
         }
     )
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
